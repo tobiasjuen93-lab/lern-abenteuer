@@ -114,6 +114,11 @@ body.touch #ordnerBtn{display:none}
 body.touch .hinweis{display:none}
 body.touch #handyHinweis{display:block}
 #handyHinweis{display:none;text-align:center;color:#999;font-size:13px;margin-top:12px}
+body.touch #status{font-size:21px;margin-top:4px;min-height:0}
+body.touch #steuerung{margin-top:6px}
+body.touch #steuerung button{font-size:18px;padding:10px 18px}
+body.touch #handyHinweis{font-size:11px;margin-top:6px}
+body.touch #gehoert,body.touch #mikinfo{font-size:14px;min-height:18px}
 @media (max-width:600px){header{padding:6px 10px}h1{font-size:20px}#menuBtn{font-size:15px;padding:8px 10px}.sterne{font-size:22px}.stein{width:30px;height:30px;font-size:16px}.stein.jetzt{font-size:24px}.stein.ziel{font-size:28px}#karte{border-width:6px;padding:12px 6px 24px}#karte.zwei .txt{font-size:clamp(56px,15vw,160px)}#karte .txt{font-size:clamp(80px,24vw,200px)}.wahl button{font-size:32px;padding:24px 30px}#spielKopf{font-size:18px;white-space:normal}.gruen{font-size:26px}#haus .dach{height:90px}#dachZahl{width:64px;height:64px;font-size:44px}}
 
 .obj{position:absolute;transform:translate(-50%,-50%);pointer-events:none;line-height:1;white-space:nowrap}
@@ -429,7 +434,7 @@ function punkt(){
 function starteMinispiel(){
   document.querySelectorAll('.konfetti').forEach(k=>k.remove());
   $('feier').classList.remove('zeigen');$('spiel').classList.add('zeigen');
-  $('spielEnde').style.display='none';feld.style.display='';feld.innerHTML='';feld.onpointermove=null;
+  $('spielEnde').style.display='none';feld.style.display='';feld.innerHTML='';feld.onpointermove=null;feld.onpointerdown=null;
   spielPunkte=0;spielZielAkt=SPIEL_ZIEL;spielGitter=false;spielLaeuft=true;spielTaste=null;spielTasteLos=null;feld.style.cursor='';
   if(spielStop){try{spielStop();}catch(x){}spielStop=null;}
   // reihum alle Spiele, nie zweimal dasselbe hintereinander (auch über Neustarts gespeichert)
@@ -452,6 +457,7 @@ function sterneFangen(){
   let kx=0.5,links=false,rechts=false,sterneL=[],naechster=0,lauf=true,tVor=0;
   const setze=()=>{korb.style.left=(kx*100)+'%';};setze();
   feld.onpointermove=e=>{const r=feld.getBoundingClientRect();kx=Math.min(0.92,Math.max(0.08,(e.clientX-r.left)/r.width));setze();};
+  feld.onpointerdown=feld.onpointermove;
   spielTaste=k=>{if(k==='ArrowLeft')links=true;if(k==='ArrowRight')rechts=true;};
   spielTasteLos=k=>{if(k==='ArrowLeft')links=false;if(k==='ArrowRight')rechts=false;};
   function schritt(t){
@@ -464,8 +470,9 @@ function sterneFangen(){
     }
     sterneL=sterneL.filter(s=>{
       s.y+=0.0028*f;s.el.style.left=(s.x*100)+'%';s.el.style.top=(s.y*100)+'%';
-      if(spielLaeuft&&s.y>0.72&&s.y<0.9&&Math.abs(s.x-kx)<0.1){s.el.textContent='✨';setTimeout(()=>s.el.remove(),200);punkt();return false;}
-      if(s.y>1.02){s.el.remove();return false;}
+      const sr=s.el.getBoundingClientRect(),kr=korb.getBoundingClientRect(),sx=sr.left+sr.width/2,sb=sr.top+sr.height*0.6;
+      if(spielLaeuft&&sx>kr.left+kr.width*0.1&&sx<kr.right-kr.width*0.1&&sb>kr.top+kr.height*0.25&&sb<kr.bottom){s.el.textContent='✨';setTimeout(()=>s.el.remove(),200);punkt();return false;}
+      if(sr.top>feld.getBoundingClientRect().bottom){s.el.remove();return false;}
       return true;
     });
     requestAnimationFrame(schritt);
@@ -883,8 +890,10 @@ function passt(text,zielKey){
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 let rec=null,hoeren=false,pausiert=false,ignBis=0,chromeAus=false;
 const mikBtn=$('mikBtn');
+const IOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 function recStarten(){
   if(chromeAus||!SR)return;
+  if(IOS&&voskModell)return;   // iPhone: Safari-Erkennung stört das Mikrofon von Vosk → nur Vosk
   if(!rec){
     rec=new SR();rec.lang=cfg.sprache||'de-AT';rec.continuous=true;rec.interimResults=true;rec.maxAlternatives=5;
     rec.onstart=()=>{ignBis=0;};
@@ -919,20 +928,20 @@ function recStarten(){
   try{rec.start();}catch(x){}
 }
 function mikAnzeige(){mikBtn.textContent=hoeren?'⏸ Stopp':'🎤 Start';mikBtn.classList.toggle('an',hoeren);}
-let mikStream=null,voskNode=null;
+let mikStream=null,voskNode=null,mikQuelle=null,mikGen=0,letzterTon=0,mikNeuAm=0,mikNeuLaeuft=false;
 async function mikOeffnen(){
   if(mikStream)return true;
   try{
     mikStream=await navigator.mediaDevices.getUserMedia({audio:true});
     const a=audioCtx();try{await a.resume();}catch(x){}
-    const quelle=a.createMediaStreamSource(mikStream);
+    const quelle=a.createMediaStreamSource(mikStream);mikQuelle=quelle;const gen=++mikGen;letzterTon=Date.now();
     const an=a.createAnalyser();an.fftSize=512;quelle.connect(an);
     voskNode=a.createScriptProcessor(4096,1,1);
-    voskNode.onaudioprocess=ev=>{if(voskRec&&hoeren&&!pausiert){try{voskRec.acceptWaveform(ev.inputBuffer);}catch(x){}}};
+    voskNode.onaudioprocess=ev=>{letzterTon=Date.now();if(voskRec&&hoeren&&!pausiert){try{voskRec.acceptWaveform(ev.inputBuffer);}catch(x){}}};
     quelle.connect(voskNode);voskNode.connect(a.destination);
     const d=new Uint8Array(an.fftSize);
     (function pegel(){an.getByteTimeDomainData(d);let m=0;for(const v of d)m=Math.max(m,Math.abs(v-128));
-      aktivEl().classList.toggle('hoert',hoeren&&!pausiert&&m>18);requestAnimationFrame(pegel);})();
+      if(gen!==mikGen)return;aktivEl().classList.toggle('hoert',hoeren&&!pausiert&&m>18);requestAnimationFrame(pegel);})();
     return true;
   }catch(e){mikinfo('⛔ Mikrofon nicht erlaubt oder nicht gefunden.');return false;}
 }
@@ -943,8 +952,29 @@ mikBtn.onclick=async()=>{
   if(hoeren){recStarten();voskZielSetzen();status(modus==='rechnen'?'Welche Zahl fehlt? Sag sie laut!':'Lies vor!');}
   else{if(rec)try{rec.abort();}catch(x){}status('Pause. Drück 🎤 zum Weitermachen.');}
 };
+// Wächter: iPhone unterbricht Mikrofon/Audio (Vorlesen, Sperre, Anrufe) → automatisch wieder anwerfen
+async function mikNeu(){
+  if(mikNeuLaeuft)return;mikNeuLaeuft=true;mikNeuAm=Date.now();
+  try{
+    try{mikStream&&mikStream.getTracks().forEach(t=>t.stop());}catch(x){}
+    try{mikQuelle&&mikQuelle.disconnect();voskNode&&voskNode.disconnect();}catch(x){}
+    mikStream=null;voskNode=null;mikQuelle=null;mikGen++;
+    if(await mikOeffnen())voskZielSetzen();
+  }finally{mikNeuLaeuft=false;}
+}
+async function mikPruefen(){
+  if(!hoeren||!mikStream||mikNeuLaeuft||document.hidden)return;
+  if(ac&&ac.state!=='running'){try{await ac.resume();}catch(x){}}
+  if(pausiert)return;
+  const tr=mikStream.getAudioTracks()[0];
+  const kaputt=!tr||tr.readyState==='ended'||tr.muted||Date.now()-letzterTon>3000;
+  if(kaputt&&Date.now()-mikNeuAm>8000)mikNeu();
+}
+setInterval(mikPruefen,1500);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){letzterTon=Date.now();setTimeout(mikPruefen,300);}});
+document.addEventListener('pointerdown',()=>{if(ac&&ac.state!=='running')try{ac.resume();}catch(x){}},true);
 function pauseHoeren(){pausiert=true;}
-function weiterHoeren(){pausiert=false;if(rec)ignBis=Infinity;setTimeout(()=>{if(ignBis===Infinity)ignBis=0;},0);if(hoeren){recStarten();voskZielSetzen();}}
+function weiterHoeren(){pausiert=false;letzterTon=Date.now();if(ac&&ac.state!=='running')try{ac.resume();}catch(x){}if(rec)ignBis=Infinity;setTimeout(()=>{if(ignBis===Infinity)ignBis=0;},0);if(hoeren){recStarten();voskZielSetzen();}}
 
 // ================= Vorlesen =================
 function vorlesen(){
@@ -1003,7 +1033,7 @@ async function voskLaden(){
   mikinfo('⏳ Sprachmodell wird geladen …');voskLaedt=true;
   try{
     voskModell=await Vosk.createModel(new URL('sprachmodell-de.tar.gz',location.href).href);
-    voskModell.setLogLevel(-1);voskLaedt=false;mikinfo('🎙️ Erkennung bereit');voskZielSetzen();
+    voskModell.setLogLevel(-1);voskLaedt=false;if(IOS&&rec){try{rec.onend=null;rec.abort();}catch(x){}}mikinfo('🎙️ Erkennung bereit');voskZielSetzen();
   }catch(e){voskModell=null;voskLaedt=false;mikinfo(chromeFehlerMerk||'⚠️ Offline-Erkennung nicht geladen – nutze nur Chrome');console.error(e);}
 }
 function voskZielSetzen(){
@@ -1196,7 +1226,7 @@ function zeigeHaus(neu){
   karte.style.display='none';hausEl.style.display='';
   const h=runde[pos].haus;$('dachZahl').textContent=h.dach;
   const st=$('stock');st.innerHTML='';
-  const rows=h.reihen.length;let rh=Math.max(istTouch?26:34,Math.min(66,Math.floor((window.innerHeight-(window.innerWidth<600?330:480))/rows)));
+  const rows=h.reihen.length;let rh=Math.max(26,Math.min(84,Math.floor((window.innerHeight-(window.innerWidth<600?300:330))/rows)));
   h.reihen.forEach((row,r)=>row.forEach((v,s)=>{
     const c=document.createElement('div');c.className='zelle '+(s?'r':'b');c.style.height=rh+'px';c.style.fontSize=Math.round(rh*0.78)+'px';
     const gi=h.luecken.findIndex(l=>l.r===r&&l.s===s);
@@ -1206,7 +1236,9 @@ function zeigeHaus(neu){
     else c.classList.add('leer');
     st.appendChild(c);
   }));
-  for(let k=0;k<15&&document.documentElement.scrollHeight>window.innerHeight+2&&rh>20;k++){rh-=3;st.querySelectorAll('.zelle').forEach(c=>{c.style.height=rh+'px';c.style.fontSize=Math.round(rh*0.78)+'px';});}
+  // Häuschen-Breite passt zur Zeilenhöhe → Kästchen bleiben gut proportioniert (nicht breit und flach)
+  const breite=()=>{hausEl.style.width='min('+Math.round(2*rh*1.7+68)+'px,92vw)';const d=Math.round(Math.max(52,Math.min(118,rh*1.6)));hausEl.querySelector('.dach').style.height=d+'px';const z=$('dachZahl');z.style.width=z.style.height=Math.round(d*0.7)+'px';z.style.fontSize=Math.round(d*0.5)+'px';};breite();
+  for(let k=0;k<30&&document.documentElement.scrollHeight>window.innerHeight+2&&rh>20;k++){rh-=2;st.querySelectorAll('.zelle').forEach(c=>{c.style.height=rh+'px';c.style.fontSize=Math.round(rh*0.78)+'px';});breite();}
   if(neu){hausEl.className='';void hausEl.offsetWidth;hausEl.classList.add('rein');}
 }
 function vorleseText(){
